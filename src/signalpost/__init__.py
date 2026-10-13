@@ -30,12 +30,27 @@ from .registry import (
     fetch_company_record,
     validate_organization_number,
 )
+from .budget import BudgetLimits, BudgetTracker, execute_with_retry
+from .refresh import ChangeEvent, SnapshotStore, canonicalize_value, refresh_and_detect_changes
 from .research import research_company
 from .runner import parse_input_file, process_single_company, run_batch
+from .verification import (
+    VerificationResult,
+    check_dates_and_publication,
+    check_evidence_structure,
+    check_financial_requirements,
+    check_identity_and_domain_consistency,
+    check_organization_number_match,
+    verify_company_profile,
+    verify_single_claim,
+)
 
 __all__ = [
     "AvailabilityStatus",
     "BlockedError",
+    "BudgetLimits",
+    "BudgetTracker",
+    "ChangeEvent",
     "Claim",
     "CompanyProfile",
     "CompanyRecord",
@@ -51,15 +66,27 @@ __all__ = [
     "NotFoundError",
     "RegistryClient",
     "RegistryError",
+    "SnapshotStore",
     "SourceType",
     "TerminalEnvelope",
     "TransientError",
+    "VerificationResult",
+    "canonicalize_value",
+    "check_dates_and_publication",
+    "check_evidence_structure",
+    "check_financial_requirements",
+    "check_identity_and_domain_consistency",
+    "check_organization_number_match",
+    "execute_with_retry",
     "fetch_company_record",
     "format_failed_envelope",
     "format_successful_envelope",
     "parse_input_file",
     "process_single_company",
+    "refresh_and_detect_changes",
     "research_company",
     "run_batch",
     "validate_organization_number",
+    "verify_company_profile",
+    "verify_single_claim",
 ]

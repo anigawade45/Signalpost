@@ -563,22 +563,29 @@ def research_company(
                 evidence_list.append(ev_careers)
                 claims.append(Claim(field="careers_url", value=careers_page.url, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_careers_id]))
 
-                # Discover job openings
+                # Discover job openings with verbatim evidence only
                 open_jobs_text = None
-                count_m = re.search(r"\b(\d+)\s+(?:ledige\s+stillinger|open\s+positions|vacancies|job\s+openings)\b", careers_page.visible_text, re.I)
-                if count_m:
-                    open_jobs_text = f"{count_m.group(1)} open positions"
-                elif any(term in careers_page.visible_text.lower() for term in ["ledige stillinger", "open positions", "see all vacancies", "se ledige stillinger", "visit our careers portal", "summer internship"]):
-                    open_jobs_text = "Active recruitment / open positions listed on careers portal"
+                matched_span = None
 
-                if open_jobs_text:
+                # Search for specific count or listing phrase
+                count_m = re.search(r"(\b\d+\s+(?:ledige\s+stillinger|open\s+positions|vacancies|job\s+openings)\b)", careers_page.visible_text, re.I)
+                if count_m:
+                    matched_span = count_m.group(1)
+                    open_jobs_text = matched_span
+                else:
+                    phrase_m = re.search(r"([^.\n]{5,50}\b(?:ledige\s+stillinger|open\s+positions|vacancies|job\s+openings)\b[^.\n]{0,50})", careers_page.visible_text, re.I)
+                    if phrase_m:
+                        matched_span = phrase_m.group(1).strip()
+                        open_jobs_text = matched_span
+
+                if open_jobs_text and matched_span:
                     ev_jobs_id = "ev-web-jobs"
                     ev_jobs = Evidence(
                         id=ev_jobs_id,
                         source_url=careers_page.url,
                         source_name=f"Verified Careers Page ({careers_page.url})",
                         retrieved_at=careers_page.retrieved_at,
-                        supporting_text=f"Recruitment opportunities: {open_jobs_text}",
+                        supporting_text=matched_span,
                         note=f"Job openings verified on official careers portal for {record.legal_name}.",
                         source_type=SourceType.VERIFIED_COMPANY_WEBSITE,
                         content_sha256=careers_page.content_sha256,

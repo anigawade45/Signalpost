@@ -191,3 +191,19 @@ To qualify a submission:
   - Entities that belong to a corporate group must preserve `is_part_of_group: true`.
   - Group-wide consolidated workforce numbers (from annual account PDFs / financial notes) must be published under a distinct scope or claim rather than conflated with the legal entity's registry count.
 
+---
+
+## 9. Evaluator Budgets, Timeouts & Research Throttle
+
+To guarantee that the evaluator never hangs or runs out of execution budget, Signalpost implements hard resource boundaries tracked in real time via `BudgetTracker`:
+
+| Parameter | Default Limit | Throttle Threshold (80%) | Behavioral Enforcement |
+| :--- | :---: | :---: | :--- |
+| **Requests per Entity** | `15` requests | `12` requests | Halts optional crawling at request 12; immediately formats & writes envelope. |
+| **Time per Entity** | `30.0` seconds | `24.0` seconds | Bypasses further discovery; guarantees envelope completes before timeout. |
+| **Total Batch Requests** | `200` (12-run) / `1,500` (100-run) | `90%` of cap | Restricts subsequent entities to core registry lookups only. |
+| **Total 3rd-Party Cost** | `$10.00` USD | `$8.00` USD | Degrades to zero-cost offline extractor automatically. |
+| **Total Batch Runtime** | `300.0` seconds | `240.0` seconds | Flushes unallocated slots with graceful completion. |
+| **Transient Retries** | `3` attempts max | N/A | Strictly for timeouts, ConnectErrors, HTTP 429, and 5xx; backoff = `0.1s * 2^attempt`. |
+
+

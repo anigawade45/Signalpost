@@ -80,6 +80,7 @@ def format_successful_envelope(
     requests: int = 1,
     runtime_ms: int = 0,
     cost_usd: float = 0.0,
+    changes: Optional[list[Any]] = None,
 ) -> TerminalEnvelope:
     """Transform an internal CompanyProfile into the official terminal envelope."""
     claims = [
@@ -106,6 +107,11 @@ def format_successful_envelope(
         for ev in profile.evidence
     ]
 
+    formatted_changes = [
+        c.to_dict() if hasattr(c, "to_dict") else c
+        for c in (changes or [])
+    ]
+
     return TerminalEnvelope(
         organisation_number=profile.organization_number,
         run=EnvelopeRun(
@@ -116,7 +122,7 @@ def format_successful_envelope(
         ),
         claims=claims,
         evidence=evidence_items,
-        changes=[],
+        changes=formatted_changes,
         errors=[],
         operations=EnvelopeOperations(
             requests=requests,
