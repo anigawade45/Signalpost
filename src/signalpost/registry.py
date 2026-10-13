@@ -6,6 +6,7 @@ and normalizes company identity into internal records with complete provenance.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -82,6 +83,9 @@ class RolesRecord(BaseModel):
     chair: Optional[str] = None
     board_members: list[str] = Field(default_factory=list)
     raw_roles: list[RoleHolder] = Field(default_factory=list)
+    ceo_raw_text: Optional[str] = None
+    chair_raw_text: Optional[str] = None
+    board_raw_text: Optional[str] = None
     source_url: str
     retrieved_at: str
 
@@ -90,11 +94,17 @@ class AnnualAccountsRecord(BaseModel):
     """Normalized annual accounts from Regnskapsregisteret."""
     model_config = ConfigDict(extra="ignore")
 
-    period: Optional[str] = None
+    period: Optional[str] = None  # Formatted period range or year
+    period_start: Optional[str] = None  # fraDato (e.g. 2025-01-01)
+    period_end: Optional[str] = None  # tilDato (e.g. 2025-12-31)
+    period_year: Optional[str] = None  # Filing year (e.g. 2025)
     currency: Optional[str] = None
     revenue: Optional[float] = None
     operating_result: Optional[float] = None
     annual_result: Optional[float] = None
+    scope: Optional[str] = None  # "consolidated" (KONSERN) vs "company" (SELSKAP)
+    registry_latest_year: Optional[str] = None  # from Enhetsregisteret sisteInnsendteAarsregnskap
+    note: Optional[str] = None
     source_url: str
     retrieved_at: str
     status: str = "available"
@@ -114,7 +124,8 @@ class CompanyRecord(BaseModel):
     is_under_liquidation: Optional[bool] = None
     is_deleted: Optional[bool] = None
     deleted_date: Optional[str] = None
-    registration_date: Optional[str] = None
+    founding_date: Optional[str] = None  # stiftelsesdato (actual founding/incorporation date)
+    registration_date: Optional[str] = None  # registreringsdatoEnhetsregisteret (register entry date)
     is_registered_in_business_register: Optional[bool] = None
     is_registered_in_vat_register: Optional[bool] = None
     latest_submitted_accounts: Optional[str] = None
@@ -289,6 +300,7 @@ def normalize_registry_response(
         is_under_liquidation=is_under_liq,
         is_deleted=is_deleted,
         deleted_date=deleted_date,
+        founding_date=raw_data.get("stiftelsesdato"),
         registration_date=raw_data.get("registreringsdatoEnhetsregisteret"),
         is_registered_in_business_register=raw_data.get("registrertIForetaksregisteret"),
         is_registered_in_vat_register=raw_data.get("registrertIMvaregisteret"),
@@ -318,6 +330,8 @@ def normalize_roles_response(data: dict[str, Any], source_url: str, retrieved_at
     """
     ceo: Optional[str] = None
     chair: Optional[str] = None
+    ceo_raw_text: Optional[str] = None
+    chair_raw_text: Optional[str] = None
     board_members: list[str] = []
     raw_roles: list[RoleHolder] = []
 
@@ -377,22 +391,31 @@ def normalize_roles_response(data: dict[str, Any], source_url: str, retrieved_at
             if not ceo:
                 if r_code == "DAGL" or g_code == "DAGL" or any(kw in role_label.lower() for kw in ["daglig leder", "administrerende direktør", "managing director", "ceo"]):
                     ceo = holder_name
+                    ceo_raw_text = f'{{"rolle": "{role_label}", "kode": "{r_code}", "navn": "{holder_name}"}}'
 
             # Detect Chair / Styrets leder
             if not chair:
                 if r_code == "LEDE" or (g_code == "STYR" and any(kw in role_label.lower() for kw in ["styrets leder", "leder av styret", "chair"])):
                     chair = holder_name
+                    chair_raw_text = f'{{"rolle": "{role_label}", "kode": "{r_code}", "navn": "{holder_name}"}}'
 
-            # Detect Board Members / Styremedlem
-            if r_code in {"MEDL", "SMED"} or (g_code == "STYR" and "styremedlem" in role_label.lower() and "vara" not in role_label.lower()):
+            # Detect Board Members / Styremedlem (strict exclusion of varamedlem and observatør)
+            is_board_role = (r_code in {"MEDL", "SMED"} or (g_code == "STYR" and "styremedlem" in role_label.lower()))
+            is_deputy_or_observer = any(ex in role_label.lower() for ex in ["vara", "observatør", "deputy", "observer"]) or r_code in {"VARA", "OBS"}
+            if is_board_role and not is_deputy_or_observer:
                 if holder_name not in board_members and holder_name != chair:
                     board_members.append(holder_name)
+
+    board_raw_text = f'{{"styremedlemmer": {json.dumps(board_members)}}}' if board_members else None
 
     return RolesRecord(
         ceo=ceo,
         chair=chair,
         board_members=board_members,
         raw_roles=raw_roles,
+        ceo_raw_text=ceo_raw_text,
+        chair_raw_text=chair_raw_text,
+        board_raw_text=board_raw_text,
         source_url=source_url,
         retrieved_at=retrieved_at,
     )
@@ -403,20 +426,51 @@ def normalize_annual_accounts_response(
     source_url: str,
     retrieved_at: str,
     status: str = "available",
+    prefer_consolidated: bool = True,
+    registry_latest_year: Optional[str] = None,
 ) -> Optional[AnnualAccountsRecord]:
-    """Normalize latest annual accounts from Regnskapsregisteret."""
+    """Normalize latest annual accounts from Regnskapsregisteret.
+
+    1. Sorts filings descending to pick the newest available reporting period (tilDato).
+    2. Identifies and distinguishes consolidated (KONSERN) vs company (SELSKAP) scope.
+    3. Retains full period start (fraDato) and end (tilDato).
+    """
     if not data or not isinstance(data, list):
         return None
 
-    latest = data[0] if len(data) > 0 and isinstance(data[0], dict) else None
-    if not latest:
+    filings = [f for f in data if isinstance(f, dict)]
+    if not filings:
         return None
 
-    p_info = latest.get("regnskapsperiode", {})
-    til_dato = p_info.get("tilDato") or ""
-    period = til_dato[:4] if len(til_dato) >= 4 else None
-    if not period and latest.get("journalnr"):
-        period = str(latest["journalnr"])[:4]
+    def filing_sort_key(item: dict[str, Any]) -> tuple[str, int]:
+        p = item.get("regnskapsperiode") or {}
+        end = str(p.get("tilDato") or "")
+        reg_type = str(item.get("regnskapstype") or "").upper()
+        scope_score = 1 if (prefer_consolidated and reg_type == "KONSERN") else 0
+        return (end, scope_score)
+
+    filings.sort(key=filing_sort_key, reverse=True)
+    latest = filings[0]
+
+    p_info = latest.get("regnskapsperiode") or {}
+    fra_dato = p_info.get("fraDato")
+    til_dato = p_info.get("tilDato")
+    period_year = til_dato[:4] if til_dato and len(til_dato) >= 4 else (str(latest.get("journalnr"))[:4] if latest.get("journalnr") else None)
+
+    if fra_dato and til_dato:
+        period_str = f"{fra_dato} to {til_dato}"
+    elif til_dato:
+        period_str = str(til_dato)
+    else:
+        period_str = period_year
+
+    reg_type = str(latest.get("regnskapstype") or "").upper()
+    if reg_type == "KONSERN":
+        scope = "consolidated"
+    elif reg_type == "SELSKAP":
+        scope = "company"
+    else:
+        scope = "company"
 
     currency = latest.get("valuta")
 
@@ -454,12 +508,23 @@ def normalize_annual_accounts_response(
             except (ValueError, TypeError):
                 pass
 
+    note_parts = [f"Scope: {scope} accounts ({reg_type}). Period: {period_str}."]
+    if registry_latest_year and period_year and registry_latest_year != period_year:
+        note_parts.append(f"Latest filed per registry: {registry_latest_year}, figures available in accounts API: {period_year}.")
+    note = " ".join(note_parts)
+
     return AnnualAccountsRecord(
-        period=period,
+        period=period_str,
+        period_start=fra_dato,
+        period_end=til_dato,
+        period_year=period_year,
         currency=currency,
         revenue=rev,
         operating_result=op_result,
         annual_result=ann_result,
+        scope=scope,
+        registry_latest_year=registry_latest_year,
+        note=note,
         source_url=source_url,
         retrieved_at=retrieved_at,
         status=status,
@@ -593,11 +658,17 @@ class RegistryClient:
 
         return normalize_roles_response(data, source_url=url, retrieved_at=retrieved_at)
 
-    def get_annual_accounts(self, organization_number: str | int) -> tuple[Optional[AnnualAccountsRecord], str]:
+    def get_annual_accounts(
+        self,
+        organization_number: str | int,
+        registry_latest_year: Optional[str] = None,
+        is_part_of_group: bool = True,
+    ) -> tuple[Optional[AnnualAccountsRecord], str]:
         """Fetch latest filed annual accounts from Regnskapsregisteret.
 
         Returns:
-            (record, status): where status is 'available', 'not_available' (404), or 'failed' (500/network error).
+            (record, status): where status is 'available', 'not_available' (404),
+            'not_applicable' (unsupported banking format), or 'failed' (500/network error).
         """
         try:
             valid_org = validate_organization_number(organization_number)
@@ -615,6 +686,9 @@ class RegistryClient:
         if response.status_code == 404:
             return None, "not_available"
         if response.status_code in {500, 502, 503, 504}:
+            resp_txt = response.text.lower()
+            if "oppstillingsplan som ikke er stottet" in resp_txt or "bank" in resp_txt:
+                return None, "not_applicable"
             return None, "failed"
         if response.status_code != 200:
             return None, "failed"
@@ -624,7 +698,14 @@ class RegistryClient:
         except Exception:
             return None, "failed"
 
-        rec = normalize_annual_accounts_response(data, source_url=url, retrieved_at=retrieved_at, status="available")
+        rec = normalize_annual_accounts_response(
+            data,
+            source_url=url,
+            retrieved_at=retrieved_at,
+            status="available",
+            prefer_consolidated=is_part_of_group,
+            registry_latest_year=registry_latest_year,
+        )
         return rec, ("available" if rec else "not_available")
 
 

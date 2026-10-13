@@ -121,7 +121,10 @@ def test_normalize_annual_accounts_extracts_revenue_results_period_currency() ->
     )
 
     assert accounts is not None
-    assert accounts.period == "2023"
+    assert accounts.period == "2023-01-01 to 2023-12-31"
+    assert accounts.period_start == "2023-01-01"
+    assert accounts.period_end == "2023-12-31"
+    assert accounts.scope == "company"
     assert accounts.currency == "NOK"
     assert accounts.revenue == 198263000000.0
     assert accounts.operating_result == 9592000000.0
@@ -137,6 +140,8 @@ def test_research_company_attaches_roles_and_accounts_claims() -> None:
         entity_type="ASA",
         entity_type_description="Allmennaksjeselskap",
         registered_status="active",
+        founding_date="1905-12-02",
+        registration_date="1995-02-19",
         registry_source_url="https://data.brreg.no/enhetsregisteret/api/enheter/914778271",
         retrieved_at="2026-10-13T10:00:00Z",
     )
@@ -152,9 +157,13 @@ def test_research_company_attaches_roles_and_accounts_claims() -> None:
     mock_client.get_roles.return_value = mock_roles
 
     mock_accounts = AnnualAccountsRecord(
-        period="2023",
+        period="2025-01-01 to 2025-12-31",
+        period_start="2025-01-01",
+        period_end="2025-12-31",
+        period_year="2025",
+        scope="consolidated",
         currency="NOK",
-        revenue=198263000000.0,
+        revenue=213281000000.0,
         operating_result=9592000000.0,
         annual_result=2804000000.0,
         source_url="https://data.brreg.no/regnskapsregisteret/regnskap/914778271",
@@ -165,20 +174,83 @@ def test_research_company_attaches_roles_and_accounts_claims() -> None:
     profile = research_company("914778271", client=mock_client, enable_web=False)
 
     claims_by_field = {c.field: c for c in profile.claims}
+    assert claims_by_field["founding_date"].value == "1905-12-02"
+    assert claims_by_field["registration_date"].value == "1995-02-19"
     assert claims_by_field["ceo"].value == "Eivind Kallevik"
     assert claims_by_field["board_chair"].value == "Rune Bjerke"
     assert "Kristin Kragseth" in claims_by_field["board_members"].value
-    assert claims_by_field["financial_revenue"].value == 198263000000.0
+    assert claims_by_field["financial_revenue"].value == 213281000000.0
     assert claims_by_field["financial_operating_result"].value == 9592000000.0
     assert claims_by_field["financial_annual_result"].value == 2804000000.0
     assert claims_by_field["financial_currency"].value == "NOK"
-    assert claims_by_field["financial_period"].value == "2023"
+    assert claims_by_field["financial_period"].value == "2025-01-01 to 2025-12-31"
+    assert claims_by_field["financial_scope"].value == "consolidated"
 
-    # Evidence checks
+    # Evidence checks: each role gets its own distinct evidence record
     ev_by_id = {e.id: e for e in profile.evidence}
-    assert "ev-reg-roles" in ev_by_id
+    assert "ev-reg-role-ceo" in ev_by_id
+    assert "ev-reg-role-chair" in ev_by_id
+    assert "ev-reg-role-board" in ev_by_id
     assert "ev-reg-accounts" in ev_by_id
-    assert ev_by_id["ev-reg-accounts"].reporting_period == "2023"
+
+
+def test_spot_check_jens_petter_olsen_and_deputy_exclusion() -> None:
+    # Test deputy members (VARA) and observers (OBS) are strictly excluded from board_members
+    raw_data = {
+        "rollegrupper": [
+            {
+                "type": {"kode": "STYR", "beskrivelse": "Styre"},
+                "roller": [
+                    {
+                        "type": {"kode": "LEDE", "beskrivelse": "Styrets leder"},
+                        "person": {"navn": {"fornavn": "Jens", "mellomnavn": "Petter", "etternavn": "Olsen"}},
+                    },
+                    {
+                        "type": {"kode": "MEDL", "beskrivelse": "Styremedlem"},
+                        "person": {"navn": {"fornavn": "Gyrid", "etternavn": "Ingerø"}},
+                    },
+                    {
+                        "type": {"kode": "VARA", "beskrivelse": "Varamedlem"},
+                        "person": {"navn": {"fornavn": "Per", "mellomnavn": "Morten", "etternavn": "Schou"}},
+                    },
+                    {
+                        "type": {"kode": "OBS", "beskrivelse": "Observatør"},
+                        "person": {"navn": {"fornavn": "Astrid", "etternavn": "Observatør"}},
+                    },
+                ],
+            }
+        ]
+    }
+    roles = normalize_roles_response(raw_data, "https://mock/roller", "2026-10-13T10:00:00Z")
+    assert roles.chair == "Jens Petter Olsen"
+    assert "Gyrid Ingerø" in roles.board_members
+    # Varamedlem and observatør must NOT be counted as board members
+    assert "Per Morten Schou" not in roles.board_members
+    assert "Astrid Observatør" not in roles.board_members
+    assert len(roles.board_members) == 1
+
+
+def test_bank_accounts_mapped_to_not_applicable() -> None:
+    mock_client = MagicMock(spec=RegistryClient)
+    mock_record = CompanyRecord(
+        organization_number="984851006",
+        legal_name="DNB BANK ASA",
+        entity_type="ASA",
+        entity_type_description="Allmennaksjeselskap",
+        registered_status="active",
+        registry_source_url="https://data.brreg.no/enhetsregisteret/api/enheter/984851006",
+        retrieved_at="2026-10-13T10:00:00Z",
+    )
+    mock_client.get_company.return_value = mock_record
+    mock_client.get_roles.return_value = None
+    mock_client.get_annual_accounts.return_value = (None, "not_applicable")
+
+    profile = research_company("984851006", client=mock_client, enable_web=False)
+    claims_by_field = {c.field: c for c in profile.claims}
+    assert claims_by_field["financial_revenue"].availability == AvailabilityStatus.NOT_APPLICABLE
+    assert claims_by_field["financial_revenue"].value is None
+    ev_ids = [e.id for e in profile.evidence]
+    assert "ev-reg-accounts-na" in ev_ids
 
 
 def test_careers_page_and_job_openings_discovery() -> None:

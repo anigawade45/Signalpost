@@ -118,6 +118,31 @@ def test_telenor_customer_support_text_rejected() -> None:
     assert reason == "customer_support_copy_rejected"
 
 
+def test_telenor_careers_tagline_rejected() -> None:
+    page = CleanedWebPage(
+        url="https://www.telenor.no/om/jobbitelenor",
+        title="Jobb i Telenor",
+        visible_text="Jobb i Telenor handler om mer enn bare jobb. Vi bygger og beskytter kritisk infrastruktur.",
+        content_sha256="sha-telenor-jobs",
+        retrieved_at="2026-10-13T10:00:00Z",
+    )
+
+    tagline_claim = CandidateClaim(
+        field="business_description",
+        value="Jobb i Telenor handler om mer enn bare jobb",
+        supporting_text="Jobb i Telenor handler om mer enn bare jobb",
+    )
+
+    is_valid, reason = validate_candidate_claim(
+        tagline_claim,
+        page=page,
+        legal_name="TELENOR ASA",
+        org_number="982463718",
+    )
+    assert is_valid is False
+    assert reason in {"careers_path_cannot_provide_business_description", "careers_tagline_rejected"}
+
+
 # -----------------------------------------------------------------------------
 # 3. DNB email extraction does not invent an email purpose
 # -----------------------------------------------------------------------------

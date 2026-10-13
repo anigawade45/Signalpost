@@ -8,6 +8,7 @@ import json
 import os
 import re
 from typing import Any, Optional
+import urllib.parse
 
 import httpx
 
@@ -63,6 +64,18 @@ def _propose_website_candidates(legal_name: Optional[str]) -> list[str]:
     ]
 
 
+def get_published_website_url(record_website: Optional[str], verified_url: str) -> str:
+    """Return the registry's website value or the verified site root without redirect paths."""
+    if record_website:
+        raw_reg = record_website if record_website.startswith(("http://", "https://")) else f"https://{record_website}"
+        parsed_reg = urllib.parse.urlsplit(raw_reg)
+        if parsed_reg.netloc:
+            return f"{parsed_reg.scheme or 'https'}://{parsed_reg.netloc}"
+        return record_website.rstrip("/")
+    parsed = urllib.parse.urlsplit(verified_url)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _create_registry_evidence(record: CompanyRecord, evidence_id: str = "ev-reg-1") -> Evidence:
     """Create an immutable evidence record referencing the official registry call."""
     raw_hash = None
@@ -115,6 +128,7 @@ def build_claims_from_record(record: CompanyRecord, evidence_id: str) -> tuple[l
         ("entity_type", record.entity_type),
         ("entity_type_description", record.entity_type_description),
         ("registered_status", record.registered_status),
+        ("founding_date", record.founding_date),
         ("registration_date", record.registration_date),
         ("industry_code", record.industry_code),
         ("industry_description", record.industry_description),
@@ -203,7 +217,11 @@ def research_company(
         acc_status = "not_available"
         if hasattr(reg_client, "get_annual_accounts"):
             try:
-                a_res = reg_client.get_annual_accounts(record.organization_number)
+                a_res = reg_client.get_annual_accounts(
+                    record.organization_number,
+                    registry_latest_year=record.latest_submitted_accounts,
+                    is_part_of_group=record.is_part_of_group,
+                )
                 if isinstance(a_res, tuple) and len(a_res) == 2:
                     accounts, acc_status = a_res
                 elif isinstance(a_res, AnnualAccountsRecord):
@@ -220,35 +238,58 @@ def research_company(
 
     requests_count = 1
 
-    # 1. Add roles claims & evidence
-    if roles and (roles.ceo or roles.chair or roles.board_members):
+    # 1. Add roles claims with distinct, individual evidence records per role
+    if roles:
         requests_count += 1
-        roles_text = f'"organisasjonsnummer": "{record.organization_number}", "ceo": "{roles.ceo or ""}", "chair": "{roles.chair or ""}", "board_members": {json.dumps(roles.board_members)}'
-        ev_roles = Evidence(
-            id="ev-reg-roles",
-            source_url=roles.source_url,
-            source_name="Brønnøysundregistrene Enhetsregisteret (Roller)",
-            retrieved_at=roles.retrieved_at,
-            supporting_text=roles_text,
-            note=f"Official registered leadership and board members for {record.legal_name}. Birth dates discarded.",
-            source_type=SourceType.OFFICIAL_REGISTRY,
-            content_sha256=hashlib.sha256(roles_text.encode("utf-8")).hexdigest(),
-        )
-        evidence_list.append(ev_roles)
-
         if roles.ceo:
-            claims.append(Claim(field="ceo", value=roles.ceo, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_roles.id]))
-            claims.append(Claim(field="leadership", value=roles.ceo, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_roles.id]))
+            ev_ceo_text = roles.ceo_raw_text or f'"organisasjonsnummer": "{record.organization_number}", "ceo": "{roles.ceo}"'
+            ev_ceo = Evidence(
+                id="ev-reg-role-ceo",
+                source_url=roles.source_url,
+                source_name="Brønnøysundregistrene Enhetsregisteret (Roller)",
+                retrieved_at=roles.retrieved_at,
+                supporting_text=ev_ceo_text,
+                note=f"Official registered CEO / Daglig leder for {record.legal_name}. Birth date discarded.",
+                source_type=SourceType.OFFICIAL_REGISTRY,
+                content_sha256=hashlib.sha256(ev_ceo_text.encode("utf-8")).hexdigest(),
+            )
+            evidence_list.append(ev_ceo)
+            claims.append(Claim(field="ceo", value=roles.ceo, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_ceo.id]))
+            claims.append(Claim(field="leadership", value=roles.ceo, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_ceo.id]))
         else:
             claims.append(Claim(field="ceo", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
 
         if roles.chair:
-            claims.append(Claim(field="board_chair", value=roles.chair, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_roles.id]))
+            ev_chair_text = roles.chair_raw_text or f'"organisasjonsnummer": "{record.organization_number}", "chair": "{roles.chair}"'
+            ev_chair = Evidence(
+                id="ev-reg-role-chair",
+                source_url=roles.source_url,
+                source_name="Brønnøysundregistrene Enhetsregisteret (Roller)",
+                retrieved_at=roles.retrieved_at,
+                supporting_text=ev_chair_text,
+                note=f"Official registered Board Chair for {record.legal_name}. Birth date discarded.",
+                source_type=SourceType.OFFICIAL_REGISTRY,
+                content_sha256=hashlib.sha256(ev_chair_text.encode("utf-8")).hexdigest(),
+            )
+            evidence_list.append(ev_chair)
+            claims.append(Claim(field="board_chair", value=roles.chair, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_chair.id]))
         else:
             claims.append(Claim(field="board_chair", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
 
         if roles.board_members:
-            claims.append(Claim(field="board_members", value=roles.board_members, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_roles.id]))
+            ev_board_text = roles.board_raw_text or f'"organisasjonsnummer": "{record.organization_number}", "board_members": {json.dumps(roles.board_members)}'
+            ev_board = Evidence(
+                id="ev-reg-role-board",
+                source_url=roles.source_url,
+                source_name="Brønnøysundregistrene Enhetsregisteret (Roller)",
+                retrieved_at=roles.retrieved_at,
+                supporting_text=ev_board_text,
+                note=f"Official registered Board Members for {record.legal_name}. Deputy members (varamedlemmer) and observers excluded. Birth dates discarded.",
+                source_type=SourceType.OFFICIAL_REGISTRY,
+                content_sha256=hashlib.sha256(ev_board_text.encode("utf-8")).hexdigest(),
+            )
+            evidence_list.append(ev_board)
+            claims.append(Claim(field="board_members", value=roles.board_members, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_board.id]))
         else:
             claims.append(Claim(field="board_members", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
     else:
@@ -259,7 +300,8 @@ def research_company(
     # 2. Add annual accounts claims & evidence
     if accounts and (accounts.revenue is not None or accounts.operating_result is not None or accounts.annual_result is not None):
         requests_count += 1
-        acc_text = f'"organisasjonsnummer": "{record.organization_number}", "regnskapsperiode": "{accounts.period}", "valuta": "{accounts.currency}", "sumDriftsinntekter": {accounts.revenue}, "driftsresultat": {accounts.operating_result}, "aarsresultat": {accounts.annual_result}'
+        acc_text = f'"organisasjonsnummer": "{record.organization_number}", "regnskapsperiode": "{accounts.period}", "scope": "{accounts.scope or ""}", "valuta": "{accounts.currency}", "sumDriftsinntekter": {accounts.revenue}, "driftsresultat": {accounts.operating_result}, "aarsresultat": {accounts.annual_result}'
+        acc_note = accounts.note or f"Official filed annual accounts for {record.legal_name} (Period: {accounts.period}, Scope: {accounts.scope}, Currency: {accounts.currency})."
         ev_acc = Evidence(
             id="ev-reg-accounts",
             source_url=accounts.source_url,
@@ -267,7 +309,7 @@ def research_company(
             retrieved_at=accounts.retrieved_at,
             reporting_period=accounts.period,
             supporting_text=acc_text,
-            note=f"Official filed annual accounts for {record.legal_name} ({accounts.period}, currency: {accounts.currency}).",
+            note=acc_note,
             source_type=SourceType.OFFICIAL_REPORT,
             content_sha256=hashlib.sha256(acc_text.encode("utf-8")).hexdigest(),
         )
@@ -278,7 +320,27 @@ def research_company(
         claims.append(Claim(field="financial_annual_result", value=accounts.annual_result, availability=AvailabilityStatus.AVAILABLE if accounts.annual_result is not None else AvailabilityStatus.NOT_AVAILABLE, evidence_ids=[ev_acc.id] if accounts.annual_result is not None else []))
         claims.append(Claim(field="financial_currency", value=accounts.currency, availability=AvailabilityStatus.AVAILABLE if accounts.currency else AvailabilityStatus.NOT_AVAILABLE, evidence_ids=[ev_acc.id] if accounts.currency else []))
         claims.append(Claim(field="financial_period", value=accounts.period, availability=AvailabilityStatus.AVAILABLE if accounts.period else AvailabilityStatus.NOT_AVAILABLE, evidence_ids=[ev_acc.id] if accounts.period else []))
+        claims.append(Claim(field="financial_scope", value=accounts.scope, availability=AvailabilityStatus.AVAILABLE if accounts.scope else AvailabilityStatus.NOT_AVAILABLE, evidence_ids=[ev_acc.id] if accounts.scope else []))
         claims.append(Claim(field="financial_figures", value=accounts.revenue or accounts.operating_result, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_acc.id]))
+    elif acc_status == "not_applicable":
+        requests_count += 1
+        supp_na = f"Official Regnskapsregisteret returned unsupported financial statement structure (BANK format) for {record.organization_number}"
+        ev_acc_na = Evidence(
+            id="ev-reg-accounts-na",
+            source_url=f"https://data.brreg.no/regnskapsregisteret/regnskap/{record.organization_number}",
+            source_name=f"Brønnøysundregistrene Regnskapsregisteret ({record.organization_number})",
+            retrieved_at=datetime.now(timezone.utc).isoformat(),
+            supporting_text=supp_na,
+            note="Annual accounts structure for banking entities is not supported by Regnskapsregisteret standardized API (oppstillingsplan: BANK). Status: not_applicable.",
+            source_type=SourceType.OFFICIAL_REPORT,
+            content_sha256=hashlib.sha256(supp_na.encode("utf-8")).hexdigest(),
+        )
+        evidence_list.append(ev_acc_na)
+        claims.append(Claim(field="financial_revenue", value=None, availability=AvailabilityStatus.NOT_APPLICABLE, evidence_ids=[ev_acc_na.id]))
+        claims.append(Claim(field="financial_operating_result", value=None, availability=AvailabilityStatus.NOT_APPLICABLE, evidence_ids=[ev_acc_na.id]))
+        claims.append(Claim(field="financial_annual_result", value=None, availability=AvailabilityStatus.NOT_APPLICABLE, evidence_ids=[ev_acc_na.id]))
+        claims.append(Claim(field="financial_period", value=None, availability=AvailabilityStatus.NOT_APPLICABLE, evidence_ids=[ev_acc_na.id]))
+        claims.append(Claim(field="financial_scope", value=None, availability=AvailabilityStatus.NOT_APPLICABLE, evidence_ids=[ev_acc_na.id]))
     elif acc_status == "failed":
         requests_count += 1
         supp_fail = f"Official Regnskapsregisteret retrieval returned technical or server error (HTTP 500) for {record.organization_number}"
@@ -288,7 +350,7 @@ def research_company(
             source_name=f"Brønnøysundregistrene Regnskapsregisteret ({record.organization_number})",
             retrieved_at=datetime.now(timezone.utc).isoformat(),
             supporting_text=supp_fail,
-            note=f"Annual accounts retrieval failed due to technical server error. Registry data preserved.",
+            note="Annual accounts retrieval failed due to technical server error. Registry data preserved.",
             source_type=SourceType.OFFICIAL_REPORT,
             content_sha256=hashlib.sha256(supp_fail.encode("utf-8")).hexdigest(),
         )
@@ -296,10 +358,14 @@ def research_company(
         claims.append(Claim(field="financial_revenue", value=None, availability=AvailabilityStatus.FAILED, evidence_ids=[ev_acc_fail.id]))
         claims.append(Claim(field="financial_operating_result", value=None, availability=AvailabilityStatus.FAILED, evidence_ids=[ev_acc_fail.id]))
         claims.append(Claim(field="financial_annual_result", value=None, availability=AvailabilityStatus.FAILED, evidence_ids=[ev_acc_fail.id]))
+        claims.append(Claim(field="financial_period", value=None, availability=AvailabilityStatus.FAILED, evidence_ids=[ev_acc_fail.id]))
+        claims.append(Claim(field="financial_scope", value=None, availability=AvailabilityStatus.FAILED, evidence_ids=[ev_acc_fail.id]))
     else:
         claims.append(Claim(field="financial_revenue", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
         claims.append(Claim(field="financial_operating_result", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
         claims.append(Claim(field="financial_annual_result", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
+        claims.append(Claim(field="financial_period", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
+        claims.append(Claim(field="financial_scope", value=None, availability=AvailabilityStatus.NOT_AVAILABLE))
 
     total_cost_usd = 0.0
 
@@ -456,17 +522,32 @@ def research_company(
             )
             evidence_list.append(homepage_evidence)
 
-            # Update official_website claim
+            # Update official_website claim with site root or registry URL (not redirect subpath)
+            pub_website = get_published_website_url(record.website, verified_website_url)
             for c in claims:
                 if c.field == "official_website":
-                    c.value = verified_website_url
+                    c.value = pub_website
                     c.availability = AvailabilityStatus.AVAILABLE
                     c.evidence_ids = [web_ev_id]
             if "official_website" in unknowns:
                 unknowns.remove("official_website")
 
-            # Check if any verified page is a careers page
-            careers_page = next((p for p in verified_pages if any(kw in p.url.lower() for kw in CAREERS_KEYWORDS)), None)
+            # Check if any verified page is a genuine careers page
+            careers_page = None
+            for p in verified_pages:
+                if p.url == verified_website_url:
+                    continue
+                if not any(kw in p.url.lower() for kw in CAREERS_KEYWORDS):
+                    continue
+                if p.status_code != 200:
+                    continue
+                p_text_lower = p.visible_text.lower()
+                if any(err in p_text_lower for err in ["page not found", "siden finnes ikke", "404 not found", "error 404"]):
+                    continue
+                if any(jkw in p_text_lower for jkw in ["karriere", "career", "stilling", "jobb", "job", "vacanc", "open position", "ledige stillinger"]):
+                    careers_page = p
+                    break
+
             if careers_page:
                 ev_careers_id = "ev-web-careers"
                 ev_careers = Evidence(
@@ -475,12 +556,35 @@ def research_company(
                     source_name=f"Verified Careers Page ({careers_page.url})",
                     retrieved_at=careers_page.retrieved_at,
                     supporting_text=f"Official careers page: {careers_page.url}",
-                    note=f"Verified official careers page for {record.legal_name}.",
+                    note=f"Verified official careers page for {record.legal_name} (HTTP 200, job content verified).",
                     source_type=SourceType.VERIFIED_COMPANY_WEBSITE,
                     content_sha256=careers_page.content_sha256,
                 )
                 evidence_list.append(ev_careers)
                 claims.append(Claim(field="careers_url", value=careers_page.url, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_careers_id]))
+
+                # Discover job openings
+                open_jobs_text = None
+                count_m = re.search(r"\b(\d+)\s+(?:ledige\s+stillinger|open\s+positions|vacancies|job\s+openings)\b", careers_page.visible_text, re.I)
+                if count_m:
+                    open_jobs_text = f"{count_m.group(1)} open positions"
+                elif any(term in careers_page.visible_text.lower() for term in ["ledige stillinger", "open positions", "see all vacancies", "se ledige stillinger", "visit our careers portal", "summer internship"]):
+                    open_jobs_text = "Active recruitment / open positions listed on careers portal"
+
+                if open_jobs_text:
+                    ev_jobs_id = "ev-web-jobs"
+                    ev_jobs = Evidence(
+                        id=ev_jobs_id,
+                        source_url=careers_page.url,
+                        source_name=f"Verified Careers Page ({careers_page.url})",
+                        retrieved_at=careers_page.retrieved_at,
+                        supporting_text=f"Recruitment opportunities: {open_jobs_text}",
+                        note=f"Job openings verified on official careers portal for {record.legal_name}.",
+                        source_type=SourceType.VERIFIED_COMPANY_WEBSITE,
+                        content_sha256=careers_page.content_sha256,
+                    )
+                    evidence_list.append(ev_jobs)
+                    claims.append(Claim(field="open_job_openings", value=open_jobs_text, availability=AvailabilityStatus.AVAILABLE, evidence_ids=[ev_jobs_id]))
 
             # Extract facts from each verified page
             for page in verified_pages:

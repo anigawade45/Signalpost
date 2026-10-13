@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from typing import Any, Optional
+import urllib.parse
 from pydantic import BaseModel, ConfigDict, Field
 
 from .llm import LLMClient, LLMResponse
@@ -275,6 +276,15 @@ def validate_candidate_claim(
 
     # 5. Semantic checks for business_description
     if candidate.field == "business_description":
+        # Disallow business descriptions extracted from careers / jobs subpaths
+        page_path = urllib.parse.urlsplit(page.url).path.lower()
+        if any(marker in page_path for marker in ["/jobb", "/karriere", "/careers", "/stilling", "/jobs", "/work-with-us"]):
+            return False, "careers_path_cannot_provide_business_description"
+
+        # Disallow recruitment or careers taglines
+        if any(str_val.strip().startswith(prefix) for prefix in ["jobb i ", "karriere i ", "careers at ", "work at ", "bli en del av "]):
+            return False, "careers_tagline_rejected"
+
         if is_customer_support_copy(str_val) or is_customer_support_copy(norm_supp):
             return False, "customer_support_copy_rejected"
 
@@ -284,7 +294,7 @@ def validate_candidate_claim(
         if any(marker in str_val for marker in PRODUCT_BOILERPLATE_MARKERS):
             return False, "boilerplate_or_product_copy_rejected"
 
-        if len(str_val.strip()) < 25:
+        if len(str_val.strip()) < 50:
             return False, "insufficient_business_description_substance"
 
     # 6. Contact email validation & purpose classification

@@ -277,9 +277,15 @@ class LLMClient:
 
         # 3. Business Description
         # Look for leading descriptive sentence or paragraph
-        lines = [line.strip() for line in source_text.splitlines() if len(line.strip()) >= 30 and not line.strip().startswith(("#", "<", "*", "!", "{", "["))]
+        lines = [line.strip() for line in source_text.splitlines() if len(line.strip()) >= 50 and not line.strip().startswith(("#", "<", "*", "!", "{", "["))]
         for line in lines[:50]:
             lower_line = line.lower()
+            # Reject recruitment and careers taglines
+            if any(lower_line.startswith(p) for p in ["jobb i ", "karriere i ", "careers at ", "work at ", "bli en del av "]):
+                continue
+            if "handler om mer enn bare jobb" in lower_line or "jobb i telenor" in lower_line:
+                continue
+
             # Reject customer support instructions
             if any(term in lower_line for term in [
                 "hjelp til bruk", "kundeservice", "kontakt oss hvis du", "slik logger du inn",

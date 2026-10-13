@@ -101,7 +101,10 @@ def test_batch_cli_and_live_companies():
         org_type = claims_dict.get("entity_type")
         org_desc = claims_dict.get("entity_type_description")
         org_form_val = f"{org_type.value} ({org_desc.value})" if org_type and org_desc else (org_type.value if org_type else "N/A")
-        founding_date_val = claims_dict["registration_date"].value if "registration_date" in claims_dict else "N/A"
+        founding_date_claim = claims_dict.get("founding_date")
+        founding_date_val = founding_date_claim.value if founding_date_claim and founding_date_claim.value else "N/A"
+        reg_date_claim = claims_dict.get("registration_date")
+        reg_date_val = reg_date_claim.value if reg_date_claim and reg_date_claim.value else "N/A"
         business_addr = claims_dict.get("business_address")
         postal_addr = claims_dict.get("postal_address")
         addr_val = business_addr.value if business_addr else (postal_addr.value if postal_addr else "N/A")
@@ -121,13 +124,16 @@ def test_batch_cli_and_live_companies():
         emp_src = claims_dict.get("employee_count_source").value if "employee_count_source" in claims_dict else "N/A"
         is_group = claims_dict.get("is_part_of_group").value if "is_part_of_group" in claims_dict else "N/A"
 
-        # Roles from Brreg
+        # Roles from Brreg with distinct evidence provenance
         ceo_claim = claims_dict.get("ceo")
         chair_claim = claims_dict.get("board_chair")
         board_claim = claims_dict.get("board_members")
         ceo_val = ceo_claim.value if ceo_claim and ceo_claim.value else "N/A"
         chair_val = chair_claim.value if chair_claim and chair_claim.value else "N/A"
         board_val = ", ".join(board_claim.value) if board_claim and board_claim.value else "N/A"
+        ceo_eid = ceo_claim.evidence_ids[0] if ceo_claim and ceo_claim.evidence_ids else "N/A"
+        chair_eid = chair_claim.evidence_ids[0] if chair_claim and chair_claim.evidence_ids else "N/A"
+        board_eid = board_claim.evidence_ids[0] if board_claim and board_claim.evidence_ids else "N/A"
 
         # Annual Accounts figures from Regnskapsregisteret
         rev_claim = claims_dict.get("financial_revenue")
@@ -135,8 +141,10 @@ def test_batch_cli_and_live_companies():
         res_claim = claims_dict.get("financial_annual_result")
         curr_claim = claims_dict.get("financial_currency")
         period_claim = claims_dict.get("financial_period")
+        scope_claim = claims_dict.get("financial_scope")
         curr_val = curr_claim.value if curr_claim and curr_claim.value else "NOK"
         period_val = period_claim.value if period_claim and period_claim.value else "N/A"
+        scope_val = scope_claim.value if scope_claim and scope_claim.value else "N/A"
         rev_avail = getattr(rev_claim.availability, "value", str(rev_claim.availability)) if rev_claim else "N/A"
         op_avail = getattr(op_claim.availability, "value", str(op_claim.availability)) if op_claim else "N/A"
         rev_val = f"{rev_claim.value:,} {curr_val}" if rev_claim and rev_claim.value is not None else f"[{rev_avail}]"
@@ -154,16 +162,17 @@ def test_batch_cli_and_live_companies():
         print(f"      Legal Name:       {legal_name_val}")
         print(f"      Org Form:         {org_form_val}")
         print(f"      Registered Status:{status_val}")
-        print(f"      Founding Date:    {founding_date_val}")
+        print(f"      Founding Date:    {founding_date_val} (stiftelsesdato)")
+        print(f"      Registration Date:{reg_date_val} (Enhetsregisteret)")
         print(f"      Registered Address: {addr_val}")
         print(f"      Industry:         {ind_val}")
         print(f"      Employees ({emp_src}): {emp_val} [status: {emp_avail}, scope: {emp_scope}]")
         print(f"      Corporate Group:  {is_group} (erIKonsern structural flag)")
-        print(f"      --- Brreg Roles & Leadership ---")
-        print(f"      CEO / Daglig Leder:{ceo_val}")
-        print(f"      Board Chair:      {chair_val}")
-        print(f"      Board Members:    {board_val}")
-        print(f"      --- Annual Accounts Financials (Period: {period_val}) ---")
+        print(f"      --- Brreg Roles & Leadership (Individual Provenance) ---")
+        print(f"      CEO / Daglig Leder:{ceo_val} [evidence: {ceo_eid}]")
+        print(f"      Board Chair:      {chair_val} [evidence: {chair_eid}]")
+        print(f"      Board Members:    {board_val} [evidence: {board_eid}]")
+        print(f"      --- Annual Accounts Financials (Period: {period_val}, Scope: {scope_val}) ---")
         print(f"      Revenue:          {rev_val}")
         print(f"      Operating Result: {op_val}")
         print(f"      Annual Net Result:{res_val}")
