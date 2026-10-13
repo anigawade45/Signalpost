@@ -1,0 +1,32 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environment and Secrets
+.env
+.env.local
+.env.*.local
+
+# Data and Cache
+data/cache/
+*.jsonl.gz
+brreg-enheter.csv
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# MacOS
+.DS_Store
+._*

@@ -1,0 +1,12 @@
+{
+  "organisasjonsnummer": "999888777",
+  "navn": "OPPLØST AS",
+  "organisasjonsform": {
+    "kode": "AS",
+    "beskrivelse": "Aksjeselskap"
+  },
+  "slettedato": "2023-01-15",
+  "registrertIEnhetsregisteret": false,
+  "konkurs": true,
+  "underAvvikling": false
+}

@@ -1,0 +1,44 @@
+{
+  "organisasjonsnummer": "984851006",
+  "navn": "EQUINOR ASA",
+  "organisasjonsform": {
+    "kode": "ASA",
+    "beskrivelse": "Allment aksjeselskap",
+    "links": []
+  },
+  "registreringsdatoEnhetsregisteret": "2002-09-06",
+  "registrertIEnhetsregisteret": true,
+  "frivilligMvaRegistrertBeskrivelser": [],
+  "antallAnsatte": 23000,
+  "forretningsadresse": {
+    "land": "Norge",
+    "landkode": "NO",
+    "postnummer": "4035",
+    "poststed": "STAVANGER",
+    "adresse": [
+      "Forusbeen 50"
+    ],
+    "kommune": "STAVANGER",
+    "kommunenummer": "1103"
+  },
+  "postadresse": {
+    "land": "Norge",
+    "landkode": "NO",
+    "postnummer": "4035",
+    "poststed": "STAVANGER",
+    "adresse": [
+      "Postboks 8500"
+    ],
+    "kommune": "STAVANGER",
+    "kommunenummer": "1103"
+  },
+  "naeringskode1": {
+    "beskrivelse": "Utvinning av råolje",
+    "kode": "06.100"
+  },
+  "hjemmeside": "www.equinor.com",
+  "konkurs": false,
+  "underAvvikling": false,
+  "underTvangsavviklingEllerTvangsopplosning": false,
+  "maalform": "Bokmål"
+}
