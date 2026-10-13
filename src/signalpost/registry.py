@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 BRREG_BASE_URL = "https://data.brreg.no/enhetsregisteret/api/enheter"
+BRREG_ACCOUNTS_URL = "https://data.brreg.no/regnskapsregisteret/regnskap"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_USER_AGENT = "signalpost-registry-client/0.1.0"
 
@@ -64,6 +65,41 @@ class AddressRecord(BaseModel):
     formatted: Optional[str] = None
 
 
+class RoleHolder(BaseModel):
+    """Normalized public role holder from Enhetsregisteret (birth dates discarded)."""
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    role_type: str
+    role_code: Optional[str] = None
+
+
+class RolesRecord(BaseModel):
+    """Normalized public leadership and board roles from Enhetsregisteret."""
+    model_config = ConfigDict(extra="ignore")
+
+    ceo: Optional[str] = None
+    chair: Optional[str] = None
+    board_members: list[str] = Field(default_factory=list)
+    raw_roles: list[RoleHolder] = Field(default_factory=list)
+    source_url: str
+    retrieved_at: str
+
+
+class AnnualAccountsRecord(BaseModel):
+    """Normalized annual accounts from Regnskapsregisteret."""
+    model_config = ConfigDict(extra="ignore")
+
+    period: Optional[str] = None
+    currency: Optional[str] = None
+    revenue: Optional[float] = None
+    operating_result: Optional[float] = None
+    annual_result: Optional[float] = None
+    source_url: str
+    retrieved_at: str
+    status: str = "available"
+
+
 class CompanyRecord(BaseModel):
     """Normalized company record from Enhetsregisteret."""
     model_config = ConfigDict(extra="ignore")
@@ -92,20 +128,15 @@ class CompanyRecord(BaseModel):
     website: Optional[str] = None
     business_address: Optional[AddressRecord] = None
     postal_address: Optional[AddressRecord] = None
+    roles: Optional[RolesRecord] = None
+    annual_accounts: Optional[AnnualAccountsRecord] = None
     registry_source_url: str
     retrieved_at: str
     raw_response: Optional[dict[str, Any]] = Field(default=None, repr=False)
 
-
-
     def to_dict(self) -> dict[str, Any]:
         """Convert to standard Python dictionary."""
         return self.model_dump()
-
-
-# ==============================================================================
-# Validation & Normalization Helpers
-# ==============================================================================
 
 def validate_organization_number(organization_number: str | int) -> str:
     """Validate that the organization number consists of exactly nine digits.
@@ -278,6 +309,162 @@ def normalize_registry_response(
     )
 
 
+def normalize_roles_response(data: dict[str, Any], source_url: str, retrieved_at: str) -> RolesRecord:
+    """Normalize public leadership and board roles from Enhetsregisteret roller endpoint.
+
+    PRIVACY & DATA PROTECTION (GDPR):
+    - Birth dates (fodselsdato) are strictly discarded and never stored or returned.
+    - Only person names (fornavn, mellomnavn, etternavn) and corporate entity names are retained.
+    """
+    ceo: Optional[str] = None
+    chair: Optional[str] = None
+    board_members: list[str] = []
+    raw_roles: list[RoleHolder] = []
+
+    groups = data.get("rollegrupper", []) if isinstance(data, dict) else []
+    for g in groups:
+        g_type = g.get("type", {}) if isinstance(g, dict) else {}
+        g_code = str(g_type.get("kode", "")).upper()
+        g_desc = str(g_type.get("beskrivelse", ""))
+
+        for r in g.get("roller", []):
+            if not isinstance(r, dict):
+                continue
+            if r.get("avregistrert") or r.get("fratradt"):
+                continue
+
+            r_type = r.get("type", {}) if isinstance(r, dict) else {}
+            r_code = str(r_type.get("kode", "")).upper()
+            r_desc = str(r_type.get("beskrivelse", ""))
+
+            # Extract person name (NO birth date!)
+            person = r.get("person") or {}
+            p_name_parts = []
+            if isinstance(person, dict):
+                p_navn = person.get("navn") or {}
+                if isinstance(p_navn, dict):
+                    p_name_parts = [
+                        p_navn.get("fornavn"),
+                        p_navn.get("mellomnavn"),
+                        p_navn.get("etternavn"),
+                    ]
+            p_full = " ".join(part for part in p_name_parts if part).strip()
+
+            # Extract entity name if corporate role holder (e.g. accounting firm)
+            enhet = r.get("enhet") or {}
+            e_full = ""
+            if isinstance(enhet, dict):
+                e_navn = enhet.get("navn")
+                if isinstance(e_navn, list):
+                    e_full = " ".join(str(x) for x in e_navn).strip()
+                elif e_navn:
+                    e_full = str(e_navn).strip()
+
+            holder_name = p_full or e_full
+            if not holder_name:
+                continue
+
+            role_label = r_desc or g_desc or "Rollehaver"
+            raw_roles.append(
+                RoleHolder(
+                    name=holder_name,
+                    role_type=role_label,
+                    role_code=r_code or g_code or None,
+                )
+            )
+
+            # Detect CEO / Daglig leder
+            if not ceo:
+                if r_code == "DAGL" or g_code == "DAGL" or any(kw in role_label.lower() for kw in ["daglig leder", "administrerende direktør", "managing director", "ceo"]):
+                    ceo = holder_name
+
+            # Detect Chair / Styrets leder
+            if not chair:
+                if r_code == "LEDE" or (g_code == "STYR" and any(kw in role_label.lower() for kw in ["styrets leder", "leder av styret", "chair"])):
+                    chair = holder_name
+
+            # Detect Board Members / Styremedlem
+            if r_code in {"MEDL", "SMED"} or (g_code == "STYR" and "styremedlem" in role_label.lower() and "vara" not in role_label.lower()):
+                if holder_name not in board_members and holder_name != chair:
+                    board_members.append(holder_name)
+
+    return RolesRecord(
+        ceo=ceo,
+        chair=chair,
+        board_members=board_members,
+        raw_roles=raw_roles,
+        source_url=source_url,
+        retrieved_at=retrieved_at,
+    )
+
+
+def normalize_annual_accounts_response(
+    data: Any,
+    source_url: str,
+    retrieved_at: str,
+    status: str = "available",
+) -> Optional[AnnualAccountsRecord]:
+    """Normalize latest annual accounts from Regnskapsregisteret."""
+    if not data or not isinstance(data, list):
+        return None
+
+    latest = data[0] if len(data) > 0 and isinstance(data[0], dict) else None
+    if not latest:
+        return None
+
+    p_info = latest.get("regnskapsperiode", {})
+    til_dato = p_info.get("tilDato") or ""
+    period = til_dato[:4] if len(til_dato) >= 4 else None
+    if not period and latest.get("journalnr"):
+        period = str(latest["journalnr"])[:4]
+
+    currency = latest.get("valuta")
+
+    res_obj = latest.get("resultatregnskapResultat", {})
+    drifts_obj = res_obj.get("driftsresultat", {})
+
+    rev: Optional[float] = None
+    if isinstance(drifts_obj, dict):
+        driftsinntekter = drifts_obj.get("driftsinntekter", {})
+        if isinstance(driftsinntekter, dict):
+            raw_rev = driftsinntekter.get("sumDriftsinntekter") or driftsinntekter.get("salgsinntekter")
+            if raw_rev is not None:
+                try:
+                    rev = float(raw_rev)
+                except (ValueError, TypeError):
+                    pass
+        elif isinstance(driftsinntekter, (int, float)):
+            rev = float(driftsinntekter)
+
+    op_result: Optional[float] = None
+    if isinstance(drifts_obj, dict):
+        op_val = drifts_obj.get("driftsresultat")
+        if op_val is not None:
+            try:
+                op_result = float(op_val)
+            except (ValueError, TypeError):
+                pass
+
+    ann_result: Optional[float] = None
+    if isinstance(res_obj, dict):
+        ann_val = res_obj.get("aarsresultat")
+        if ann_val is not None:
+            try:
+                ann_result = float(ann_val)
+            except (ValueError, TypeError):
+                pass
+
+    return AnnualAccountsRecord(
+        period=period,
+        currency=currency,
+        revenue=rev,
+        operating_result=op_result,
+        annual_result=ann_result,
+        source_url=source_url,
+        retrieved_at=retrieved_at,
+        status=status,
+    )
+
 
 # ==============================================================================
 # Client Implementation
@@ -375,6 +562,70 @@ class RegistryClient:
             raise MalformedDataError(f"Expected JSON object from '{url}', got {type(data).__name__}")
 
         return normalize_registry_response(data, source_url=url, retrieved_at=retrieved_at)
+
+    def get_roles(self, organization_number: str | int) -> Optional[RolesRecord]:
+        """Fetch public role holders from Brreg roller endpoint."""
+        try:
+            valid_org = validate_organization_number(organization_number)
+        except ValueError:
+            return None
+
+        url = f"{self.base_url}/{valid_org}/roller"
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+
+        try:
+            response = self._client.get(url)
+        except Exception:
+            return None
+
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            return None
+
+        try:
+            data = response.json()
+        except Exception:
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        return normalize_roles_response(data, source_url=url, retrieved_at=retrieved_at)
+
+    def get_annual_accounts(self, organization_number: str | int) -> tuple[Optional[AnnualAccountsRecord], str]:
+        """Fetch latest filed annual accounts from Regnskapsregisteret.
+
+        Returns:
+            (record, status): where status is 'available', 'not_available' (404), or 'failed' (500/network error).
+        """
+        try:
+            valid_org = validate_organization_number(organization_number)
+        except ValueError:
+            return None, "not_available"
+
+        url = f"{BRREG_ACCOUNTS_URL}/{valid_org}"
+        retrieved_at = datetime.now(timezone.utc).isoformat()
+
+        try:
+            response = self._client.get(url)
+        except Exception:
+            return None, "failed"
+
+        if response.status_code == 404:
+            return None, "not_available"
+        if response.status_code in {500, 502, 503, 504}:
+            return None, "failed"
+        if response.status_code != 200:
+            return None, "failed"
+
+        try:
+            data = response.json()
+        except Exception:
+            return None, "failed"
+
+        rec = normalize_annual_accounts_response(data, source_url=url, retrieved_at=retrieved_at, status="available")
+        return rec, ("available" if rec else "not_available")
 
 
 def fetch_company_record(

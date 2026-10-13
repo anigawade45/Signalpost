@@ -53,6 +53,9 @@ def process_single_company(
     org_number: str,
     run_id: str,
     client: Optional[RegistryClient] = None,
+    cache: Optional[Any] = None,
+    llm_client: Optional[Any] = None,
+    enable_web: bool = True,
 ) -> TerminalEnvelope:
     """Safely process a single organization number, guaranteeing a terminal envelope."""
     start_time = time.perf_counter()
@@ -60,7 +63,13 @@ def process_single_company(
     requests_count = 1
 
     try:
-        profile = research_company(org_number, client=client)
+        profile = research_company(
+            org_number,
+            client=client,
+            cache=cache,
+            llm_client=llm_client,
+            enable_web=enable_web,
+        )
         completed_at = datetime.now(timezone.utc).isoformat()
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -69,8 +78,9 @@ def process_single_company(
             run_id=run_id,
             started_at=started_at,
             completed_at=completed_at,
-            requests=requests_count,
+            requests=profile.requests_count,
             runtime_ms=elapsed_ms,
+            cost_usd=profile.third_party_cost_usd,
         )
     except ValueError as exc:
         completed_at = datetime.now(timezone.utc).isoformat()
@@ -145,6 +155,9 @@ def run_batch(
     output_path: Path | str,
     run_id: Optional[str] = None,
     client: Optional[RegistryClient] = None,
+    cache: Optional[Any] = None,
+    llm_client: Optional[Any] = None,
+    enable_web: bool = True,
 ) -> list[TerminalEnvelope]:
     """Execute batch run over an input file, allocating result slots and ensuring 1-to-1 output."""
     if run_id is None:
@@ -161,7 +174,14 @@ def run_batch(
 
     try:
         for idx, org in enumerate(input_orgs):
-            envelope = process_single_company(org, run_id=run_id, client=reg_client)
+            envelope = process_single_company(
+                org,
+                run_id=run_id,
+                client=reg_client,
+                cache=cache,
+                llm_client=llm_client,
+                enable_web=enable_web,
+            )
             results[idx] = envelope
     finally:
         if owned_client:

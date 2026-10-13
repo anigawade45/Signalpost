@@ -36,6 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional path to write a JSON summary execution report.",
     )
+    parser.add_argument(
+        "--no-web",
+        dest="no_web",
+        action="store_true",
+        help="Disable web discovery and AI extraction (pure registry mode).",
+    )
     return parser
 
 
@@ -50,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         input_path=args.input,
         output_path=args.output,
         run_id=run_id,
+        enable_web=not args.no_web,
     )
 
     completed_count = sum(1 for e in envelopes if e.run.terminal_status == "completed")

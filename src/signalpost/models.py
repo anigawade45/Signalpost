@@ -94,6 +94,8 @@ class CompanyProfile(BaseModel):
     evidence: list[Evidence] = Field(default_factory=list)
     unknowns: list[str] = Field(default_factory=list)
     retrieved_at: str
+    requests_count: int = 1
+    third_party_cost_usd: float = 0.0
 
     def get_claim(self, field_name: str) -> Optional[Claim]:
         for c in self.claims:

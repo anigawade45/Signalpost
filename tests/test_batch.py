@@ -48,12 +48,13 @@ def test_batch_runner_three_inputs_in_three_out(tmp_path: Path) -> None:
     mock_http_client.get.side_effect = mock_get
     mock_reg_client = RegistryClient(client=mock_http_client)
 
-    # Run batch
+    # Run batch in offline mock registry mode
     envelopes = run_batch(
         input_path=input_file,
         output_path=output_file,
         run_id="test-batch-001",
         client=mock_reg_client,
+        enable_web=False,
     )
 
     # 1. Exact count check: 3 in, 3 out

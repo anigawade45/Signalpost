@@ -48,7 +48,7 @@ def test_awkward_sole_proprietorship_enk() -> None:
     mock_client = MagicMock(spec=RegistryClient)
     mock_client.get_company.return_value = record
 
-    profile = research_company("933365573", client=mock_client)
+    profile = research_company("933365573", client=mock_client, enable_web=False)
     claims_by_field = {c.field: c for c in profile.claims}
 
     assert claims_by_field["entity_type"].value == "ENK"
@@ -73,7 +73,7 @@ def test_awkward_bankrupt_company() -> None:
     mock_client = MagicMock(spec=RegistryClient)
     mock_client.get_company.return_value = record
 
-    profile = research_company("935567645", client=mock_client)
+    profile = research_company("935567645", client=mock_client, enable_web=False)
     claims_by_field = {c.field: c for c in profile.claims}
 
     assert claims_by_field["is_bankrupt"].value is True
@@ -96,7 +96,7 @@ def test_awkward_dissolved_deleted_company() -> None:
     mock_client = MagicMock(spec=RegistryClient)
     mock_client.get_company.return_value = record
 
-    profile = research_company("999888777", client=mock_client)
+    profile = research_company("999888777", client=mock_client, enable_web=False)
     claims_by_field = {c.field: c for c in profile.claims}
 
     assert claims_by_field["is_deleted"].value is True
@@ -119,7 +119,7 @@ def test_awkward_missing_industry_and_address() -> None:
     mock_client = MagicMock(spec=RegistryClient)
     mock_client.get_company.return_value = record
 
-    profile = research_company("123456789", client=mock_client)
+    profile = research_company("123456789", client=mock_client, enable_web=False)
     claims_by_field = {c.field: c for c in profile.claims}
 
     assert claims_by_field["industry_code"].availability.value == "not_available"
@@ -147,7 +147,7 @@ def test_awkward_entity_that_has_moved() -> None:
     mock_client = MagicMock(spec=RegistryClient)
     mock_client.get_company.return_value = record
 
-    profile = research_company("921345678", client=mock_client)
+    profile = research_company("921345678", client=mock_client, enable_web=False)
     claims_by_field = {c.field: c for c in profile.claims}
 
     assert claims_by_field["business_address"].value == "Strandgaten 12, 5003 BERGEN"
@@ -171,13 +171,13 @@ def test_error_code_distinction_invalid_format_vs_404(tmp_path: Path) -> None:
     reg_client = RegistryClient(client=mock_http_client)
 
     # 1. 9-digit number that passes regex check but returns 404
-    env_404 = process_single_company("000000000", run_id="err-test", client=reg_client)
+    env_404 = process_single_company("000000000", run_id="err-test", client=reg_client, enable_web=False)
     assert env_404.run.terminal_status == "failed"
     assert len(env_404.errors) == 1
     assert env_404.errors[0]["code"] == "NOT_FOUND"
 
     # 2. String that fails regex check
-    env_format = process_single_company("12345", run_id="err-test", client=reg_client)
+    env_format = process_single_company("12345", run_id="err-test", client=reg_client, enable_web=False)
     assert env_format.run.terminal_status == "failed"
     assert len(env_format.errors) == 1
     assert env_format.errors[0]["code"] == "INVALID_FORMAT"
