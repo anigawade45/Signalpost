@@ -28,6 +28,7 @@ def test_successful_envelope_schema_match() -> None:
         retrieved_at="2026-10-13T10:00:00Z",
         source_type=SourceType.OFFICIAL_REGISTRY,
         supporting_text="EQUINOR ASA org.nr 984851006",
+        note="Consolidated group workforce unknown in registry",
         content_sha256="abc123sha",
     )
 
@@ -102,9 +103,8 @@ def test_successful_envelope_schema_match() -> None:
     assert ev["source_url"] == record.registry_source_url
     assert ev["source_class"] == "official_registry"
     assert ev["claim_span"] == "EQUINOR ASA org.nr 984851006"
+    assert ev["note"] == "Consolidated group workforce unknown in registry"
     assert ev["content_sha256"] == "abc123sha"
-
-    # Verify operations
     assert data["operations"]["requests"] == 1
     assert data["operations"]["runtime_ms"] == 1500
     assert data["operations"]["third_party_cost_usd"] == 0.0
@@ -127,10 +127,12 @@ def test_failed_envelope_schema_match() -> None:
 
     data = failed_env.to_dict()
     assert data["organisation_number"] == "invalid-123"
-    assert data["run"]["terminal_status"] == "failed"
-    assert data["errors"] == ["ValueError: Invalid organization number"]
+    assert data["errors"] == [
+        {"code": "INVALID_FORMAT", "message": "ValueError: Invalid organization number"}
+    ]
     assert data["claims"] == []
     assert data["evidence"] == []
+
 
     # Validates against contract model
     validated = TerminalEnvelope.model_validate(data)

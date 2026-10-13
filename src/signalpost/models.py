@@ -56,8 +56,10 @@ class Evidence(BaseModel):
     publication_date: Optional[str] = None
     reporting_period: Optional[str] = None
     supporting_text: Optional[str] = None
+    note: Optional[str] = None  # Explanatory sentence or domain interpretation note
     source_type: SourceType = SourceType.OFFICIAL_REGISTRY
     content_sha256: Optional[str] = None
+
 
 
 class Claim(BaseModel):

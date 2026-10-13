@@ -71,15 +71,18 @@ def test_batch_runner_three_inputs_in_three_out(tmp_path: Path) -> None:
     assert len(envelopes[0].evidence) == 1
     assert envelopes[0].errors == []
 
-    # Second: 404 mapped to failed result, NOT crash
+    # Second: 404 mapped to failed result with NOT_FOUND code, NOT crash
     assert envelopes[1].run.terminal_status == "failed"
     assert len(envelopes[1].errors) == 1
-    assert "NotFoundError" in envelopes[1].errors[0]
+    assert envelopes[1].errors[0]["code"] == "NOT_FOUND"
+    assert "NotFoundError" in envelopes[1].errors[0]["message"]
 
-    # Third: invalid format mapped to failed result, NOT crash
+    # Third: invalid format mapped to failed result with INVALID_FORMAT code, NOT crash
     assert envelopes[2].run.terminal_status == "failed"
     assert len(envelopes[2].errors) == 1
-    assert "ValueError" in envelopes[2].errors[0]
+    assert envelopes[2].errors[0]["code"] == "INVALID_FORMAT"
+    assert "ValueError" in envelopes[2].errors[0]["message"]
+
 
     # 4. Verify output file contains exactly 3 valid JSON lines
     lines = output_file.read_text(encoding="utf-8").strip().splitlines()

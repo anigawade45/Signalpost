@@ -9,7 +9,13 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .output import TerminalEnvelope, format_failed_envelope, format_successful_envelope
-from .registry import RegistryClient
+from .registry import (
+    BlockedError,
+    MalformedDataError,
+    NotFoundError,
+    RegistryClient,
+    TransientError,
+)
 from .research import research_company
 
 
@@ -66,20 +72,72 @@ def process_single_company(
             requests=requests_count,
             runtime_ms=elapsed_ms,
         )
-    except Exception as exc:
+    except ValueError as exc:
         completed_at = datetime.now(timezone.utc).isoformat()
         elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-        error_msg = f"{type(exc).__name__}: {str(exc)}"
-
         return format_failed_envelope(
             organization_number=org_number,
-            error_message=error_msg,
+            error_message=f"ValueError: {exc}",
+            error_code="INVALID_FORMAT",
             run_id=run_id,
             started_at=started_at,
             completed_at=completed_at,
             requests=requests_count,
             runtime_ms=elapsed_ms,
         )
+    except NotFoundError as exc:
+        completed_at = datetime.now(timezone.utc).isoformat()
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        return format_failed_envelope(
+            organization_number=org_number,
+            error_message=f"NotFoundError: {exc}",
+            error_code="NOT_FOUND",
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            requests=requests_count,
+            runtime_ms=elapsed_ms,
+        )
+    except BlockedError as exc:
+        completed_at = datetime.now(timezone.utc).isoformat()
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        return format_failed_envelope(
+            organization_number=org_number,
+            error_message=f"BlockedError: {exc}",
+            error_code="BLOCKED",
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            requests=requests_count,
+            runtime_ms=elapsed_ms,
+        )
+    except TransientError as exc:
+        completed_at = datetime.now(timezone.utc).isoformat()
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        return format_failed_envelope(
+            organization_number=org_number,
+            error_message=f"TransientError: {exc}",
+            error_code="TRANSIENT_ERROR",
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            requests=requests_count,
+            runtime_ms=elapsed_ms,
+        )
+    except Exception as exc:
+        completed_at = datetime.now(timezone.utc).isoformat()
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+        return format_failed_envelope(
+            organization_number=org_number,
+            error_message=f"{type(exc).__name__}: {str(exc)}",
+            error_code="GENERIC_ERROR",
+            run_id=run_id,
+            started_at=started_at,
+            completed_at=completed_at,
+            requests=requests_count,
+            runtime_ms=elapsed_ms,
+        )
+
 
 
 def run_batch(

@@ -34,6 +34,10 @@ sentiment = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "--ignore=tests/test_poc.py"
+markers = [
+  "live: marks tests requiring live external network access to Brønnøysund API",
+]
+
 
 
 [tool.uv]

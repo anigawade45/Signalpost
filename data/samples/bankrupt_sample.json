@@ -1,0 +1,14 @@
+{
+  "organisasjonsnummer": "935567645",
+  "navn": "1SB JERNBANEKAFEEN AS",
+  "organisasjonsform": {
+    "kode": "AS",
+    "beskrivelse": "Aksjeselskap"
+  },
+  "registreringsdatoEnhetsregisteret": "2025-01-10",
+  "registrertIEnhetsregisteret": true,
+  "konkurs": true,
+  "konkursdato": "2025-06-01",
+  "underAvvikling": false,
+  "underTvangsavviklingEllerTvangsopplosning": false
+}

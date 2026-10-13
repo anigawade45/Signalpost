@@ -163,10 +163,12 @@ def test_workforce_scope_distinction() -> None:
     assert claims_map["is_part_of_group"] is True
 
     ev = _create_registry_evidence(record, evidence_id="ev-1")
-    assert "scope: legal_entity_only, does NOT include subsidiaries" in ev.supporting_text
-    assert "corporate group member (erIKonsern: True)" in ev.supporting_text
-
-
+    assert '"organisasjonsnummer": "914778271"' in ev.supporting_text
+    assert '"antallAnsatte": 400' in ev.supporting_text
+    assert ev.note is not None
+    assert "legal entity 914778271 parent/HQ workforce only" in ev.note
+    assert "group-wide headcount is unknown" in ev.note
+    assert "corporate group member" in ev.note
 
 
 # ==============================================================================
@@ -258,11 +260,13 @@ def test_bad_input_and_404_do_not_crash_safe_usage() -> None:
 # Live Integration Test (Official Public Registry)
 # ==============================================================================
 
+@pytest.mark.live
 def test_live_company_dnb() -> None:
     """Check one real company from the official public registry.
 
     Confirms returned number and legal name match.
     """
+
     try:
         record = fetch_company_record("984851006")
     except (TransientError, BlockedError) as exc:

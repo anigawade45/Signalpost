@@ -26,18 +26,22 @@ def _create_registry_evidence(record: CompanyRecord, evidence_id: str = "ev-reg-
         raw_bytes = json.dumps(record.raw_response, sort_keys=True, ensure_ascii=False).encode("utf-8")
         raw_hash = hashlib.sha256(raw_bytes).hexdigest()
 
-    supporting_parts = [f"Organisasjonsnummer: {record.organization_number}"]
+    verbatim_parts = [f'"organisasjonsnummer": "{record.organization_number}"']
     if record.legal_name:
-        supporting_parts.append(f"Navn: {record.legal_name}")
-    if record.entity_type:
-        supporting_parts.append(f"Form: {record.entity_type}")
+        verbatim_parts.append(f'"navn": "{record.legal_name}"')
+    if record.employee_count is not None:
+        verbatim_parts.append(f'"antallAnsatte": {record.employee_count}')
+    supporting_text = ", ".join(verbatim_parts)
+
+    note_parts = []
     if record.employee_count is not None:
         group_desc = "corporate group member (erIKonsern: True)" if record.is_part_of_group else "independent entity (erIKonsern: False)"
-        supporting_parts.append(
-            f"Ansatte: {record.employee_count} direct employees under legal entity {record.organization_number} "
-            f"(source: {record.employee_count_source or 'NAV Aa-registeret'}; scope: legal_entity_only, does NOT include subsidiaries or group-wide workforce; corporate structure: {group_desc})"
+        note_parts.append(
+            f"Employee count ({record.employee_count}) represents legal entity {record.organization_number} parent/HQ workforce only "
+            f"via NAV Aa-registeret. Never describe as overall company/group size; group-wide headcount is unknown until reported "
+            f"in consolidated annual accounts ({group_desc})."
         )
-
+    note = " ".join(note_parts) if note_parts else None
 
     return Evidence(
         id=evidence_id,
@@ -46,7 +50,8 @@ def _create_registry_evidence(record: CompanyRecord, evidence_id: str = "ev-reg-
         retrieved_at=record.retrieved_at,
         publication_date=record.registration_date,
         reporting_period=record.latest_submitted_accounts,
-        supporting_text="; ".join(supporting_parts),
+        supporting_text=supporting_text,
+        note=note,
         source_type=SourceType.OFFICIAL_REGISTRY,
         content_sha256=raw_hash,
     )

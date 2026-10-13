@@ -37,12 +37,21 @@ class EnvelopeEvidence(BaseModel):
     retrieved_at: str
     content_sha256: Optional[str] = None
     claim_span: Optional[str] = None
+    note: Optional[str] = None
+
+
+class EnvelopeError(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    code: str
+    message: str
 
 
 class EnvelopeOperations(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     requests: int = 0
+
     runtime_ms: int = 0
     third_party_cost_usd: float = 0.0
 
@@ -92,6 +101,7 @@ def format_successful_envelope(
             retrieved_at=ev.retrieved_at,
             content_sha256=ev.content_sha256,
             claim_span=ev.supporting_text,
+            note=ev.note,
         )
         for ev in profile.evidence
     ]
@@ -122,11 +132,28 @@ def format_failed_envelope(
     run_id: str,
     started_at: str,
     completed_at: str,
+    error_code: Optional[str] = None,
     requests: int = 1,
     runtime_ms: int = 0,
     cost_usd: float = 0.0,
 ) -> TerminalEnvelope:
     """Create a valid terminal envelope representing a failed company research execution."""
+    if not error_code:
+        if "ValueError" in error_message or "invalid" in error_message.lower():
+            error_code = "INVALID_FORMAT"
+        elif "NotFoundError" in error_message or "404" in error_message:
+            error_code = "NOT_FOUND"
+        elif "BlockedError" in error_message or "403" in error_message or "429" in error_message:
+            error_code = "BLOCKED"
+        elif "TransientError" in error_message or "timeout" in error_message.lower():
+            error_code = "TRANSIENT_ERROR"
+        elif "MalformedDataError" in error_message:
+            error_code = "MALFORMED_DATA"
+        else:
+            error_code = "GENERIC_ERROR"
+
+    err_item = EnvelopeError(code=error_code, message=error_message)
+
     return TerminalEnvelope(
         organisation_number=str(organization_number),
         run=EnvelopeRun(
@@ -138,10 +165,11 @@ def format_failed_envelope(
         claims=[],
         evidence=[],
         changes=[],
-        errors=[error_message],
+        errors=[err_item.model_dump()],
         operations=EnvelopeOperations(
             requests=requests,
             runtime_ms=runtime_ms,
             third_party_cost_usd=cost_usd,
         ),
     )
+

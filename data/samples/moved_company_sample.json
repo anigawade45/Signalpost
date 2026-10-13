@@ -1,0 +1,34 @@
+{
+  "organisasjonsnummer": "921345678",
+  "navn": "FLYTTET TJENESTER AS",
+  "organisasjonsform": {
+    "kode": "AS",
+    "beskrivelse": "Aksjeselskap"
+  },
+  "registreringsdatoEnhetsregisteret": "2018-05-12",
+  "registrertIEnhetsregisteret": true,
+  "forretningsadresse": {
+    "land": "Norge",
+    "landkode": "NO",
+    "postnummer": "5003",
+    "poststed": "BERGEN",
+    "adresse": ["Strandgaten 12"],
+    "kommune": "BERGEN",
+    "kommunenummer": "4601"
+  },
+  "postadresse": {
+    "land": "Norge",
+    "landkode": "NO",
+    "postnummer": "0150",
+    "poststed": "OSLO",
+    "adresse": ["Postboks 123 Sentrum"],
+    "kommune": "OSLO",
+    "kommunenummer": "0301"
+  },
+  "naeringskode1": {
+    "kode": "62.010",
+    "beskrivelse": "Programmeringstjenester"
+  },
+  "konkurs": false,
+  "underAvvikling": false
+}

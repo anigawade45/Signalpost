@@ -26,6 +26,7 @@ def run_all_pytest():
         "tests/test_registry.py",
         "tests/test_output.py",
         "tests/test_batch.py",
+        "tests/test_awkward_cases.py",
     ]
 
     res = subprocess.run(cmd, capture_output=True, text=True)
@@ -103,6 +104,7 @@ def test_batch_cli_and_real_companies():
         print(f"     Corporate Group: {is_group} (erIKonsern structural flag; does not alter legal_entity count scope)")
         print(f"     Evidence Source: {env.evidence[0].source_url if env.evidence else 'None'}")
         print(f"     Evidence Text:   {env.evidence[0].claim_span if env.evidence else 'None'}")
+        print(f"     Evidence Note:   {env.evidence[0].note if env.evidence else 'None'}")
         print(f"     Evidence Time:   {env.evidence[0].retrieved_at if env.evidence else 'None'}")
 
 
@@ -113,6 +115,8 @@ def test_batch_cli_and_real_companies():
         assert len(env.evidence) > 0
         assert env.evidence[0].source_url.startswith("https://data.brreg.no")
         assert env.evidence[0].retrieved_at is not None
+        if env.evidence[0].claim_span:
+            assert '"organisasjonsnummer":' in env.evidence[0].claim_span
 
         if emp_avail == "available":
             assert emp_scope == "legal_entity", f"Expected legal_entity scope, got {emp_scope}"
@@ -153,14 +157,17 @@ def test_batch_cli_and_real_companies():
 
     assert env1.run.terminal_status == "failed"
     assert env1.organisation_number == "invalid-org"
-    assert "ValueError" in env1.errors[0]
+    assert env1.errors[0]["code"] == "INVALID_FORMAT"
+    assert "ValueError" in env1.errors[0]["message"]
 
     assert env2.run.terminal_status == "failed"
     assert env2.organisation_number == "000000000"
-    assert "NotFoundError" in env2.errors[0]
+    assert env2.errors[0]["code"] == "NOT_FOUND"
+    assert "NotFoundError" in env2.errors[0]["message"]
 
     assert env3.run.terminal_status == "completed"
     assert env3.organisation_number == "984851006"
+
 
     bad_input_path.unlink(missing_ok=True)
     bad_output_path.unlink(missing_ok=True)
@@ -168,9 +175,104 @@ def test_batch_cli_and_real_companies():
     print("[PASS] Bad inputs produce failed terminal envelopes without program crashes.")
 
 
+def test_awkward_cases_batch():
+    print("=" * 60)
+    print("Running batch on awkward cases (ENK, bankrupt, no-site, group-parent, 404, invalid)...")
+    print("=" * 60)
+
+    input_file = Path("data/awkward_cases_batch.jsonl")
+    output_file = Path("out/awkward_cases_results.jsonl")
+    report_file = Path("out/awkward_cases_report.json")
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "signalpost",
+        str(input_file),
+        str(output_file),
+        "--run-id",
+        "awkward-verification-001",
+        "--report",
+        str(report_file),
+    ]
+
+    sub_env = os.environ.copy()
+    src_dir = str(Path(__file__).resolve().parent / "src")
+    existing_pp = sub_env.get("PYTHONPATH", "")
+    sub_env["PYTHONPATH"] = f"{src_dir};{existing_pp}" if existing_pp else src_dir
+
+    res = subprocess.run(cmd, capture_output=True, text=True, env=sub_env)
+    print(res.stdout)
+    if res.returncode != 0:
+        print(res.stderr)
+        raise RuntimeError(f"CLI awkward cases batch run failed with code {res.returncode}")
+
+    lines = output_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 6, f"Expected 6 output envelopes, got {len(lines)}"
+
+    print("=" * 60)
+    print("Inspecting outputs for all 6 awkward cases:")
+    print("=" * 60)
+
+    for i, line in enumerate(lines, start=1):
+        envelope_data = json.loads(line)
+        env = TerminalEnvelope.model_validate(envelope_data)
+        claims_dict = {c.field: (c.value, c.availability) for c in env.claims}
+
+        print(f"\n[Awkward {i}/6] Org: {env.organisation_number} -> Status: {env.run.terminal_status}")
+        if env.run.terminal_status == "completed":
+            print(f"     Legal Name:      {claims_dict.get('legal_name', ('N/A', ''))[0]}")
+            print(f"     Entity Type:     {claims_dict.get('entity_type', ('N/A', ''))[0]}")
+            print(f"     Reg Status:      {claims_dict.get('registered_status', ('N/A', ''))[0]}")
+            print(f"     Employees:       {claims_dict.get('employee_count', ('N/A', ''))[0]} [status: {claims_dict.get('employee_count', ('', 'not_available'))[1]}]")
+            print(f"     Website:         {claims_dict.get('official_website', ('N/A', ''))[0]} [status: {claims_dict.get('official_website', ('', 'not_available'))[1]}]")
+            print(f"     Evidence Text:   {env.evidence[0].claim_span if env.evidence else 'None'}")
+            print(f"     Evidence Note:   {env.evidence[0].note if env.evidence else 'None'}")
+        else:
+            print(f"     Error Code:      {env.errors[0]['code']}")
+            print(f"     Error Message:   {env.errors[0]['message']}")
+
+    # Validations on awkward results
+    env_enk = TerminalEnvelope.model_validate(json.loads(lines[0]))
+    assert env_enk.run.terminal_status == "completed"
+    enk_claims = {c.field: c for c in env_enk.claims}
+    assert enk_claims["entity_type"].value == "ENK"
+    assert enk_claims["employee_count"].availability == "not_available"
+
+    env_bankrupt = TerminalEnvelope.model_validate(json.loads(lines[1]))
+    assert env_bankrupt.run.terminal_status == "completed"
+    bankrupt_claims = {c.field: c for c in env_bankrupt.claims}
+    assert bankrupt_claims["registered_status"].value == "bankrupt"
+    assert bankrupt_claims["is_bankrupt"].value is True
+
+    env_nosite = TerminalEnvelope.model_validate(json.loads(lines[2]))
+    assert env_nosite.run.terminal_status == "completed"
+    nosite_claims = {c.field: c for c in env_nosite.claims}
+    assert nosite_claims["official_website"].availability == "not_available"
+    assert nosite_claims["official_website"].value is None
+
+    env_parent = TerminalEnvelope.model_validate(json.loads(lines[3]))
+    assert env_parent.run.terminal_status == "completed"
+    parent_claims = {c.field: c for c in env_parent.claims}
+    assert parent_claims["employee_count"].value == 400
+    assert parent_claims["employee_count_scope"].value == "legal_entity"
+    assert parent_claims["is_part_of_group"].value is True
+
+    env_404 = TerminalEnvelope.model_validate(json.loads(lines[4]))
+    assert env_404.run.terminal_status == "failed"
+    assert env_404.errors[0]["code"] == "NOT_FOUND"
+
+    env_invalid = TerminalEnvelope.model_validate(json.loads(lines[5]))
+    assert env_invalid.run.terminal_status == "failed"
+    assert env_invalid.errors[0]["code"] == "INVALID_FORMAT"
+
+    print("\n[PASS] All awkward cases handled cleanly with distinct error codes and expected statuses.")
+
+
 if __name__ == "__main__":
     run_all_pytest()
     test_batch_cli_and_real_companies()
+    test_awkward_cases_batch()
     print("\n" + "=" * 60)
-    print("ALL PHASE 2 DELIVERABLES AND EXIT CRITERIA PASSED!")
+    print("ALL PHASE 2 DELIVERABLES, REFINEMENTS AND AWKWARD CASES PASSED!")
     print("=" * 60)

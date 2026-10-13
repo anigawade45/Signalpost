@@ -1,0 +1,14 @@
+{
+  "organisasjonsnummer": "933365573",
+  "navn": "- ZOTKO .NO",
+  "organisasjonsform": {
+    "kode": "ENK",
+    "beskrivelse": "Enkeltpersonforetak"
+  },
+  "registreringsdatoEnhetsregisteret": "2024-04-18",
+  "registrertIEnhetsregisteret": true,
+  "erIKonsern": false,
+  "konkurs": false,
+  "underAvvikling": false,
+  "underTvangsavviklingEllerTvangsopplosning": false
+}
